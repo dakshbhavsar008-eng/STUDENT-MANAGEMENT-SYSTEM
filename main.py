@@ -3,8 +3,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 # Student Management System
-# Concepts used: Lists, Dictionaries, Functions, File Handling, Tkinter
-# No MySQL or other database is required. Student records are stored in students.json.
+# Concepts: Lists, Dictionaries, Functions, File Handling, Tkinter
+# Storage: students.json (no MySQL required)
 
 DATA_FILE = "students.json"
 students = []
@@ -19,29 +19,32 @@ def load_students():
             students = data if isinstance(data, list) else []
     except FileNotFoundError:
         students = []
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as error:
         students = []
         messagebox.showwarning(
             "File Notice",
-            "Could not read students.json. Starting with an empty student list."
+            f"Could not read {DATA_FILE}. Starting with an empty list.\n\n{error}"
         )
 
 
 def save_students():
-    """Save the current student list to the JSON file."""
+    """Save student records to the JSON file."""
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as file:
             json.dump(students, file, indent=4, ensure_ascii=False)
+        return True
     except OSError as error:
         messagebox.showerror("File Error", f"Could not save student records:\n{error}")
+        return False
 
 
 def refresh_table(records=None):
-    """Refresh the table using all students or a filtered list."""
+    """Refresh the table using all students or the supplied filtered records."""
     for item in student_table.get_children():
         student_table.delete(item)
 
-    for student in students if records is None else records:
+    shown_records = students if records is None else records
+    for student in shown_records:
         student_table.insert(
             "",
             tk.END,
@@ -56,23 +59,18 @@ def refresh_table(records=None):
 
 
 def clear_fields():
-    """Clear all input fields and remove the table selection."""
+    """Clear the form without changing the table selection."""
     student_id_entry.config(state="normal")
     student_id_entry.delete(0, tk.END)
     name_entry.delete(0, tk.END)
     age_entry.delete(0, tk.END)
     course_entry.delete(0, tk.END)
     email_entry.delete(0, tk.END)
-
-    selected = student_table.selection()
-    if selected:
-        student_table.selection_remove(*selected)
-
     student_id_entry.focus_set()
 
 
 def get_form_data():
-    """Validate the form and return student data as a dictionary."""
+    """Validate input and return student data as a dictionary."""
     student_id = student_id_entry.get().strip()
     name = name_entry.get().strip()
     age_text = age_entry.get().strip()
@@ -85,10 +83,13 @@ def get_form_data():
 
     try:
         age = int(age_text)
-        if age <= 0 or age > 120:
+        if not 1 <= age <= 120:
             raise ValueError
     except ValueError:
-        messagebox.showwarning("Invalid Age", "Please enter a valid age between 1 and 120.")
+        messagebox.showwarning(
+            "Invalid Age",
+            "Please enter a valid age between 1 and 120."
+        )
         return None
 
     if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
@@ -105,7 +106,7 @@ def get_form_data():
 
 
 def add_student():
-    """Add a new student after checking for a duplicate ID."""
+    """Add a student with a unique ID."""
     student = get_form_data()
     if student is None:
         return
@@ -115,20 +116,28 @@ def add_student():
         return
 
     students.append(student)
-    save_students()
-    refresh_table()
-    clear_fields()
-    messagebox.showinfo("Success", "Student added successfully.")
+    if save_students():
+        refresh_table()
+        clear_fields()
+        student_table.selection_remove(student_table.selection())
+        messagebox.showinfo("Success", "Student added successfully.")
 
 
 def select_student(event=None):
-    """Put the selected table row into the form for editing."""
+    """Load the clicked table row into the form without clearing its selection."""
     selection = student_table.selection()
     if not selection:
         return
 
     values = student_table.item(selection[0], "values")
-    clear_fields()
+
+    # Clear only the form fields. Do not clear the Treeview selection.
+    student_id_entry.config(state="normal")
+    student_id_entry.delete(0, tk.END)
+    name_entry.delete(0, tk.END)
+    age_entry.delete(0, tk.END)
+    course_entry.delete(0, tk.END)
+    email_entry.delete(0, tk.END)
 
     student_id_entry.insert(0, values[0])
     student_id_entry.config(state="readonly")
@@ -139,51 +148,60 @@ def select_student(event=None):
 
 
 def update_student():
-    """Update the selected student record."""
+    """Update the currently selected student."""
     selection = student_table.selection()
     if not selection:
-        messagebox.showwarning("Select Student", "Select a student from the table first.")
+        messagebox.showwarning("Select Student", "Click a student row in the table first.")
         return
 
-    original_id = student_table.item(selection[0], "values")[0]
+    selected_values = student_table.item(selection[0], "values")
+    original_id = str(selected_values[0])
+
+    # Read the form, then preserve the selected student's original ID.
     student = get_form_data()
     if student is None:
         return
-
-    # The ID is kept unchanged while editing an existing record.
     student["id"] = original_id
 
     for index, existing in enumerate(students):
-        if existing["id"] == original_id:
+        if str(existing.get("id", "")) == original_id:
             students[index] = student
             break
+    else:
+        messagebox.showerror("Error", "The selected student could not be found.")
+        return
 
-    save_students()
-    refresh_table()
-    clear_fields()
-    messagebox.showinfo("Success", "Student details updated successfully.")
+    if save_students():
+        refresh_table()
+        clear_fields()
+        messagebox.showinfo("Success", "Student details updated successfully.")
 
 
 def delete_student():
     """Delete the selected student after confirmation."""
     selection = student_table.selection()
     if not selection:
-        messagebox.showwarning("Select Student", "Select a student from the table first.")
+        messagebox.showwarning("Select Student", "Click a student row in the table first.")
         return
 
-    student_id = student_table.item(selection[0], "values")[0]
-    confirm = messagebox.askyesno(
+    values = student_table.item(selection[0], "values")
+    student_id = str(values[0])
+
+    if not messagebox.askyesno(
         "Confirm Delete",
         f"Are you sure you want to delete student ID {student_id}?"
-    )
-    if not confirm:
+    ):
         return
 
-    students[:] = [student for student in students if student["id"] != student_id]
-    save_students()
-    refresh_table()
-    clear_fields()
-    messagebox.showinfo("Success", "Student deleted successfully.")
+    students[:] = [
+        student for student in students
+        if str(student.get("id", "")) != student_id
+    ]
+
+    if save_students():
+        refresh_table()
+        clear_fields()
+        messagebox.showinfo("Success", "Student deleted successfully.")
 
 
 def search_students():
@@ -195,10 +213,10 @@ def search_students():
 
     results = [
         student for student in students
-        if query in student.get("id", "").lower()
-        or query in student.get("name", "").lower()
-        or query in student.get("course", "").lower()
-        or query in student.get("email", "").lower()
+        if query in str(student.get("id", "")).lower()
+        or query in str(student.get("name", "")).lower()
+        or query in str(student.get("course", "")).lower()
+        or query in str(student.get("email", "")).lower()
     ]
     refresh_table(results)
 
@@ -207,7 +225,7 @@ def search_students():
 
 
 def show_all_students():
-    """Display all saved student records."""
+    """Clear search and display every student."""
     search_entry.delete(0, tk.END)
     refresh_table()
 
@@ -290,8 +308,10 @@ student_table.configure(yscrollcommand=scrollbar.set)
 student_table.pack(side="left", fill="both", expand=True)
 scrollbar.pack(side="right", fill="y")
 
+# This event runs when a table row is selected.
 student_table.bind("<<TreeviewSelect>>", select_student)
 
 load_students()
 refresh_table()
 root.mainloop()
+
